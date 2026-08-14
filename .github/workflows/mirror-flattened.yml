@@ -1,0 +1,55 @@
+name: Mirror flattened code
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: mirror-flattened-${{ github.ref }}
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # MIRROR_TOKEN: PAT with `repo` scope on the submodules and the target repo.
+      - name: Checkout main project with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+          path: source
+          token: ${{ secrets.MIRROR_TOKEN }}
+
+      - name: Checkout target repository (default branch)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.TARGET_REPO }}
+          fetch-depth: 1
+          path: target
+          token: ${{ secrets.MIRROR_TOKEN }}
+
+      - name: Copy code without submodule metadata
+        run: |
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.gitmodules' \
+            --exclude='.github' \
+            source/ target/
+
+      - name: Commit and push
+        working-directory: target
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
+          TARGET_REPO: ${{ secrets.TARGET_REPO }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to mirror."
+            exit 0
+          fi
+          git commit -m "Sync flattened code from ${{ github.repository }}@${{ github.sha }}"
+          git push "https://x-access-token:${MIRROR_TOKEN}@github.com/${TARGET_REPO}.git" HEAD
